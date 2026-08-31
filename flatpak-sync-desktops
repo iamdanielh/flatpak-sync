@@ -1,0 +1,122 @@
+#!/bin/bash
+# Flatpak Sync - Auto-sync desktop files, icons, and Omarchy menu entries
+# Part of the flatpak-sync Omarchy plugin
+
+set -euo pipefail
+
+DEST_DIR="$HOME/.local/share"
+APPS_DIR="$DEST_DIR/applications"
+ICONS_DIR="$DEST_DIR/icons/hicolor"
+MENU_CFG="$HOME/.config/omarchy/extensions/omarchy-menu.jsonc"
+
+mkdir -p "$APPS_DIR"
+
+# Copy desktop files
+cp -f /var/lib/flatpak/exports/share/applications/*.desktop "$APPS_DIR/" 2>/dev/null || true
+
+# Helper: copy a file resolving symlinks to real files
+copy_real() {
+  local src="$1" dst="$2"
+  if [ -L "$src" ]; then
+    cp -f "$(readlink -f "$src")" "$dst"
+  elif [ -f "$src" ]; then
+    cp -f "$src" "$dst"
+  fi
+}
+
+# Sync icons from flatpak exports
+for size in 64 128 256 512; do
+  src="/var/lib/flatpak/exports/share/icons/hicolor/${size}x${size}"
+  dst="$ICONS_DIR/${size}x${size}"
+  [ -d "$src" ] || continue
+  mkdir -p "$dst"
+  for f in "$src"/*; do
+    [ -f "$f" ] || [ -L "$f" ] || continue
+    copy_real "$f" "$dst/$(basename "$f")"
+  done
+done
+
+src="/var/lib/flatpak/exports/share/icons/hicolor/scalable"
+dst="$ICONS_DIR/scalable"
+if [ -d "$src" ]; then
+  mkdir -p "$dst"
+  for f in "$src"/*; do
+    [ -f "$f" ] || [ -L "$f" ] || continue
+    copy_real "$f" "$dst/$(basename "$f")"
+  done
+fi
+
+# Sync appstream icons from flathub cache
+for size in 64 128 256 512; do
+  for dir in /var/lib/flatpak/appstream/flathub/x86_64/*/icons/${size}x${size}; do
+    [ -d "$dir" ] || continue
+    mkdir -p "$ICONS_DIR/${size}x${size}/apps"
+    for f in "$dir"/*; do
+      [ -f "$f" ] || [ -L "$f" ] || continue
+      copy_real "$f" "$ICONS_DIR/${size}x${size}/apps/$(basename "$f")"
+    done
+  done
+done
+
+# Sync app icons from flatpak app exports
+for dir in /var/lib/flatpak/app/*/x86_64/stable/*/export/share/icons/hicolor/scalable/apps; do
+  [ -d "$dir" ] || continue
+  mkdir -p "$ICONS_DIR/scalable/apps"
+  for f in "$dir"/*; do
+    [ -f "$f" ] || [ -L "$f" ] || continue
+    copy_real "$f" "$ICONS_DIR/scalable/apps/$(basename "$f")"
+  done
+done
+
+for dir in /var/lib/flatpak/app/*/x86_64/stable/*/export/share/icons/hicolor/*/apps; do
+  [ -d "$dir" ] || continue
+  size=$(basename "$(dirname "$dir")")
+  mkdir -p "$ICONS_DIR/${size}/apps"
+  for f in "$dir"/*; do
+    [ -f "$f" ] || [ -L "$f" ] || continue
+    copy_real "$f" "$ICONS_DIR/${size}/apps/$(basename "$f")"
+  done
+done
+
+# Fix broken symlinks
+find "$ICONS_DIR" -type l ! -exec test -e {} \; -delete 2>/dev/null || true
+
+# Update caches
+update-desktop-database "$APPS_DIR" 2>/dev/null || true
+gtk-update-icon-cache -f "$ICONS_DIR" 2>/dev/null || true
+
+# Auto-add new flatpak apps to Omarchy menu
+mkdir -p "$(dirname "$MENU_CFG")"
+if [ ! -f "$MENU_CFG" ]; then
+  cat > "$MENU_CFG" << 'MENUEOF'
+{
+  "media": {"icon": "\uf008", "label": "Media"}
+}
+MENUEOF
+fi
+
+# Get existing flatpak app IDs in the menu
+existing_ids=$(grep -oP 'flatpak run \K\S+' "$MENU_CFG" 2>/dev/null | tr -d '"' || true)
+
+added=0
+for desktop in "$APPS_DIR"/*.desktop; do
+  [ -f "$desktop" ] || continue
+  grep -q "X-Flatpak" "$desktop" 2>/dev/null || continue
+
+  app_id=$(basename "$desktop" .desktop)
+  echo "$existing_ids" | grep -qF "$app_id" && continue
+
+  name=$(grep -m1 "^Name=" "$desktop" | cut -d= -f2)
+  [ -z "$name" ] && continue
+
+  sed -i "s|^}|  \"media.$app_id\": {\"icon\": \"\uf019\", \"label\": \"$name\", \"action\": \"flatpak run $app_id\"},\n}|" "$MENU_CFG"
+  added=$((added + 1))
+done
+
+# Clean trailing commas
+sed -i ':a;N;$!ba;s|,\n}|}\n|g' "$MENU_CFG" 2>/dev/null || true
+
+if [ "$added" -gt 0 ]; then
+  echo "Added $added new app(s) to menu"
+  omarchy restart shell 2>/dev/null || true
+fi

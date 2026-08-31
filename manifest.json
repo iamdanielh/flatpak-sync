@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "flatpak-sync",
+  "name": "Flatpak Sync",
+  "version": "1.0.0",
+  "author": "dangel",
+  "description": "Auto-syncs flatpak desktop files, icons, and Omarchy menu entries when apps are installed or removed",
+  "kinds": [
+    "service"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "service": "Service.qml"
+  }
+}
