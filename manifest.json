@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "id": "flatpak-sync",
+  "id": "io.github.iamdanielh.flatpak-sync",
   "name": "Flatpak Sync",
   "version": "1.0.0",
   "author": "dangel",

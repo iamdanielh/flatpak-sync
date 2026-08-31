@@ -6,8 +6,8 @@ Item {
   id: root
 
   property string home: Quickshell.env("HOME")
-  property string pluginDir: home + "/.config/omarchy/plugins/flatpak-sync"
-  property string syncScript: pluginDir + "/flatpak-sync-desktops"
+  property string pluginDir: String(Qt.resolvedUrl(".")).replace(/^file:\/\//, "")
+  property string syncScript: pluginDir + "flatpak-sync-desktops"
 
   // Watch flatpak app directories for changes
   Process {

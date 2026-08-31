@@ -1,4 +1,4 @@
-# flatpak-sync (Omarchy shell plugin)
+# Flatpak Sync (Omarchy shell plugin)
 
 An Omarchy shell plugin that auto-syncs Flatpak desktop files, icons, and
 Omarchy menu entries whenever a Flatpak app is installed or removed.
@@ -10,6 +10,8 @@ then:
 - auto-adds a `media.<app_id>` entry to `~/.config/omarchy/extensions/omarchy-menu.jsonc`
   for each new Flatpak app so it shows up in the Omarchy launcher/menu.
 
+Plugin ID: `io.github.iamdanielh.flatpak-sync`
+
 ## Requirements
 
 - `inotify-tools` (provides `inotifywait`)
@@ -18,31 +20,43 @@ then:
 
 ## Install
 
-Clone it as a user shell plugin (switches the shell to the cloned copy):
-
 ```bash
-omarchy plugin clone flatpak-sync --source https://github.com/<you>/flatpak-sync
+omarchy plugin add https://github.com/iamdanielh/flatpak-sync.git --enable
 ```
 
-Or copy it manually:
+This clones the repo, validates the manifest, and enables the `service`
+plugin in the shell. Be sure to read the source before enabling, as plugins
+run unsandboxed inside your shell process.
+
+Alternatively, copy it manually and rescan:
 
 ```bash
 mkdir -p ~/.config/omarchy/plugins
-cp -r flatpak-sync ~/.config/omarchy/plugins/
+cp -r flatpak-sync ~/.config/omarchy/plugins/io.github.iamdanielh.flatpak-sync/
 omarchy-shell shell rescanPlugins
 ```
 
-The shell hot-reloads files under `~/.config/omarchy/plugins/` on save, so a
-manual copy takes effect immediately.
+## Removal
 
-`.config/omarchy/plugins/flatpak-sync/flatpak-sync-desktops` is the sync
-script; the `manifest.json` registers it as a long-running `service` plugin.
+```bash
+omarchy plugin remove io.github.iamdanielh.flatpak-sync
+```
+
+Removal disables the plugin and deletes its git checkout. It does **not**
+remove the desktop files, icons, or menu entries it generated — those are
+yours and left in place. To clean those up, delete the synced Flatpak
+entries under `~/.config/omarchy/extensions/omarchy-menu.jsonc` and run:
+
+```bash
+update-desktop-database ~/.local/share/applications
+gtk-update-icon-cache -f ~/.local/share/icons/hicolor
+```
 
 ## Layout
 
 ```
 flatpak-sync/
-├── manifest.json              # plugin metadata (id: flatpak-sync, kind: service)
+├── manifest.json              # plugin metadata (service kind)
 ├── Service.qml                # inotify watcher + debounce + runner
 └── flatpak-sync-desktops      # the sync script (portable, uses $HOME)
 ```
