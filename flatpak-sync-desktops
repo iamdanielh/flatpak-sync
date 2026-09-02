@@ -95,28 +95,75 @@ if [ ! -f "$MENU_CFG" ]; then
 MENUEOF
 fi
 
-# Get existing flatpak app IDs in the menu
-existing_ids=$(grep -oP 'flatpak run \K\S+' "$MENU_CFG" 2>/dev/null | tr -d '"' || true)
-
 added=0
+entries=""
+_TMP=""
+trap 'rm -f "$_TMP"' EXIT
 for desktop in "$APPS_DIR"/*.desktop; do
   [ -f "$desktop" ] || continue
   grep -q "X-Flatpak" "$desktop" 2>/dev/null || continue
 
   app_id=$(basename "$desktop" .desktop)
-  echo "$existing_ids" | grep -qF "$app_id" && continue
-
   name=$(grep -m1 "^Name=" "$desktop" | cut -d= -f2)
   [ -z "$name" ] && continue
 
-  sed -i "s|^}|  \"media.$app_id\": {\"icon\": \"\uf019\", \"label\": \"$name\", \"action\": \"flatpak run $app_id\"},\n}|" "$MENU_CFG"
+  # Skip apps already present in the menu
+  grep -Fq "\"media.$app_id\"" "$MENU_CFG" 2>/dev/null && continue
+
+  # Escape the name/id with a serializer before touching the config file
+  key=$(jq -cn --arg k "media.$app_id" '$k') || exit 1
+  value=$(jq -cn --arg name "$name" \
+                --arg action "flatpak run $app_id" \
+                '{"icon": "\uf019", "label": $name, "action": $action}') || exit 1
+  entries="${entries}${key}: ${value}"$'\n'
   added=$((added + 1))
 done
 
-# Clean trailing commas
-sed -i ':a;N;$!ba;s|,\n}|}\n|g' "$MENU_CFG" 2>/dev/null || true
-
 if [ "$added" -gt 0 ]; then
+  _TMP="$(mktemp "$MENU_CFG.XXXXXX")"
+  PYTHONIOENCODING=utf-8 ENTRIES="$entries" python3 - "$MENU_CFG" "$_TMP" <<'PY'
+import json
+import os
+import sys
+
+src, dst = sys.argv[1], sys.argv[2]
+new_entries = [line for line in os.environ["ENTRIES"].splitlines() if line]
+
+def without_line_comments(text):
+    return "\n".join(line for line in text.splitlines()
+                     if not line.lstrip().startswith("//"))
+
+with open(src, encoding="utf-8") as f:
+    original = f.read()
+
+try:
+    json.loads(without_line_comments(original))
+except Exception as exc:
+    print(f"flatpak-sync: refusing to edit invalid menu config: {exc}", file=sys.stderr)
+    sys.exit(1)
+
+lines = original.splitlines()
+closing = next((i for i in range(len(lines) - 1, -1, -1)
+                if lines[i].strip() == "}"), None)
+if closing is None:
+    print("flatpak-sync: cannot find closing brace in menu config", file=sys.stderr)
+    sys.exit(1)
+
+prefix = lines[:closing]
+last = prefix[-1].rstrip()
+if last and not last.endswith(","):
+    prefix[-1] = prefix[-1].rstrip() + ","
+
+prefix.append(",\n".join("  " + entry for entry in new_entries))
+prefix.append(lines[closing])
+
+new_text = "\n".join(prefix) + "\n"
+json.loads(without_line_comments(new_text))
+
+with open(dst, "w", encoding="utf-8") as f:
+    f.write(new_text)
+PY
+  mv -f "$_TMP" "$MENU_CFG"
   echo "Added $added new app(s) to menu"
   omarchy restart shell 2>/dev/null || true
 fi
